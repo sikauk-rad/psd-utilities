@@ -146,7 +146,9 @@ def check_cumulative_psd(
 
 def check_range_psd(
     psd_unique_sorted: TwoColumnArrayType,
-    material_name: str = 'material'
+    material_name: str = 'material',
+    _check_first_zero: bool = True,
+    _check_last_zero: bool = True,
 ) -> None:
 
     """
@@ -187,12 +189,12 @@ def check_range_psd(
 
     if not np.isclose(psd_unique_sorted[:,1].sum(), 1, rtol = 0, atol = 1e-4):
         raise PSDError(f'Range psds must sum to 1 (failed for {material_name}).')
-    elif psd_unique_sorted[0,1]:
+    elif _check_first_zero and psd_unique_sorted[0,1]:
         raise PSDError(
             'The first sieve in a range psd must have a fraction of 0 (failed for '\
             f'{material_name}).'
         )
-    elif psd_unique_sorted[0,-1]:
+    elif _check_last_zero and psd_unique_sorted[0,-1]:
         raise PSDError(
             'The last sieve in a range psd must have a fraction of 0 (failed for '\
             f'{material_name}).'
@@ -764,3 +766,46 @@ def interpolate_reindexed_filled_range_psds[T: int, U: int](
     
     psds_to_return[psd_has_nans_mask] = interpolated_psds[notnan_mask_inverse_grouping_order]
     return psds_to_return.T
+
+
+def get_psd_quantile_values[T: int, U: int, V: int, X: type[np.floating]](
+    sieves: np.ndarray[tuple[T], np.dtype[np.number]],
+    fractions: np.ndarray[tuple[T, U], np.dtype[np.floating]],
+    quantiles: np.ndarray[tuple[V], np.dtype[np.floating]],
+    dtype: X = np.float32,
+) -> np.ndarray[tuple[U, V], np.dtype[X]]:
+
+    '''
+    fractions should be passing range form, and sum to 1. quantiles must deceed 1.
+    '''
+
+    sum_to_1_check = np.isclose(fractions.sum(axis = 0), 1, rtol = 0, atol = 0.001)
+    if not sum_to_1_check.all():
+        raise PSDError('not all fractions sum to 1.')
+
+    if not (quantiles <= 1).all():
+        raise PSDError('not all quantiles deceed 1.')
+
+    fractions_t = fractions.T
+    fractions_t_cum = fractions_t.cumsum(axis = 1)
+    fractions_t_cum_3d, quantiles_3d = np.broadcast_arrays(
+        fractions_t_cum[:,None],
+        quantiles[None,:,None]
+    )
+    fractions_t_quantiles_diffs = fractions_t_cum_3d - quantiles_3d
+    fractions_t_quantiles_diffs_is_0 = fractions_t_quantiles_diffs == 0
+    diffs_contain_0 = fractions_t_quantiles_diffs_is_0.any(axis = -1)
+    diffs_contain_no_0 = ~diffs_contain_0
+    quantile_results = np.empty(diffs_contain_0.shape, dtype)
+
+    # handling cases where quantile is exactly present in fractions
+    quantile_idx = fractions_t_quantiles_diffs_is_0[diffs_contain_0].argmax(axis = 1)
+    quantile_results[diffs_contain_0] = sieves[quantile_idx]
+
+    # handling cases where quantile is not exactly present, so requires interpolation
+    fractions_t_quantiles_diffs_to_interpolate = fractions_t_quantiles_diffs[diffs_contain_no_0]
+    right_idx = (fractions_t_quantiles_diffs_to_interpolate > 0).argmax(axis = 1)
+    scale_factor = quantiles_3d[diffs_contain_no_0,0] / fractions_t_cum_3d[diffs_contain_no_0, right_idx]
+    quantile_results[diffs_contain_no_0] = sieves[right_idx] * scale_factor
+
+    return quantile_results
