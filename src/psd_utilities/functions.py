@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterable
+from typing import Literal
 
 import numpy as np
 from scipy.interpolate import PchipInterpolator
@@ -885,10 +886,78 @@ def get_psd_quantile_values[T: int, U: int, V: int, X: type[np.floating]](
     dtype: X = np.float32,
 ) -> np.ndarray[tuple[U, V], np.dtype[X]]:
 
-    '''
-    fractions should all have been normalised by normalise_psd, and quantiles must deceed
-    1.
-    '''
+
+    """
+    Compute sieve sizes corresponding to specified PSD quantiles.
+
+    This function returns the sieve sizes at which each particle size distribution (PSD)
+    reaches the requested quantiles. If `cumulative` is True, the input PSDs are assumed
+    to already contain cumulative fractions. If `cumulative` is False, the input PSDs are
+    interpreted as range (incremental) fractions and are first converted internally to
+    cumulative form.
+
+    For each PSD and each quantile:
+        - If the quantile exactly matches a cumulative fraction, the corresponding sieve
+          size is returned directly.
+        - Otherwise, the quantile value is estimated by linear interpolation between the
+          two neighbouring sieve points that bracket the quantile.
+
+    Parameters
+    ----------
+    sieves : np.ndarray[tuple[T], np.dtype[np.number]]
+        A 1D NumPy array of sieve sizes, sorted in ascending order.
+    psds : np.ndarray[tuple[T, U], np.dtype[np.floating]]
+        A 2D NumPy array of shape (number of sieves, number of PSDs), where each column
+        is a PSD aligned to `sieves`.
+    quantiles : np.ndarray[tuple[V], np.dtype[np.floating]]
+        A 1D NumPy array of quantiles to evaluate, expressed as fractions between 0 and
+        1 inclusive (for example, 0.1 for D10, 0.5 for D50, and 0.9 for D90).
+    cumulative : bool
+        If True, `psds` is interpreted as containing cumulative passing fractions.
+        If False, `psds` is interpreted as containing range fractions and is internally
+        converted to cumulative fractions before evaluating quantiles.
+    dtype : type[np.floating], optional
+        Floating-point dtype of the returned array. Default is `np.float32`.
+
+    Returns
+    -------
+    np.ndarray[tuple[U, V], np.dtype[X]]
+        A 2D NumPy array of shape (number of PSDs, number of quantiles), where each row
+        corresponds to a PSD and each column corresponds to a requested quantile.
+
+    Raises
+    ------
+    PSDError
+        If any quantile is less than 0 or greater than 1.
+        If `cumulative` is True and the PSDs are not monotonically non-decreasing or do
+        not reach 1 within tolerance.
+        If `cumulative` is False and the range fractions do not sum to 1 within
+        tolerance.
+
+    Notes
+    -----
+    - The function assumes that `sieves` are sorted in ascending order.
+    - For cumulative PSDs, each column is expected to represent a cumulative passing PSD.
+    - For range PSDs, each column is expected to be normalised so that fractions sum to
+      1.
+    - Quantile values are obtained by linear interpolation in fraction–sieve space.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> sieves = np.array([2.36, 4.75, 9.5, 19.0])
+    >>> psds = np.array([
+    ...     [0.0, 0.0],
+    ...     [0.3, 0.2],
+    ...     [0.8, 0.7],
+    ...     [1.0, 1.0],
+    ... ])
+    >>> quantiles = np.array([0.1, 0.5, 0.9])
+    >>> get_psd_quantile_values(sieves, psds, quantiles, cumulative=True)
+    array([[ 3.156667,  6.65    , 14.75    ],
+           [ 3.555   ,  7.464286, 15.833333]], dtype=float32)
+    """
+
         
     if not (quantiles <= 1).all():
         raise PSDError('not all quantiles deceed 1.')
@@ -952,3 +1021,140 @@ def get_psd_quantile_values[T: int, U: int, V: int, X: type[np.floating]](
         gradients
     )
     return quantile_results
+
+
+def match_psds[T: int, U: int](
+    sieves: np.ndarray[tuple[T], np.dtype[np.floating]],
+    target_psd: np.ndarray[tuple[T], np.dtype[np.floating]],
+    component_psds: np.ndarray[tuple[T, U], np.dtype[np.floating]],
+    component_bounds: np.ndarray[tuple[U, Literal[2]]],
+) -> tuple[
+        np.ndarray[tuple[U], np.dtype[np.float32]], 
+        np.ndarray[tuple[T], np.dtype[np.float32]],
+    ]:
+
+
+    """
+    Match a target PSD as a bounded weighted combination of component PSDs.
+
+    This function solves an optimisation problem to determine the proportions of a set of
+    component particle size distributions (PSDs) that best approximate a target PSD. The
+    objective minimises the weighted integrated squared difference between the target PSD
+    and the blended PSD across the sieve range, subject to lower and upper bounds on the
+    component proportions and the constraint that the proportions sum to 1.
+
+    The weighting is based on the logarithmic spacing of adjacent sieve sizes, so the
+    objective approximates the area between curves on a log-sieve scale using the
+    trapezium rule.
+
+    Parameters
+    ----------
+    sieves : np.ndarray[tuple[T], np.dtype[np.floating]]
+        A 1D NumPy array of sieve sizes, sorted in ascending order.
+    target_psd : np.ndarray[tuple[T], np.dtype[np.floating]]
+        A 1D NumPy array containing the target cumulative passing PSD evaluated at
+        `sieves`.
+    component_psds : np.ndarray[tuple[T, U], np.dtype[np.floating]]
+        A 2D NumPy array of shape (number of sieves, number of components), where each
+        column is a component cumulative passing PSD evaluated at `sieves`.
+    component_bounds : np.ndarray[tuple[U, Literal[2]]]
+        A 2D NumPy array of shape (number of components, 2), where each row contains the
+        lower and upper bounds for the corresponding component proportion.
+
+    Returns
+    -------
+    optimised_component_quantities : np.ndarray[tuple[U], np.dtype[np.float32]]
+        A 1D NumPy array containing the optimised proportions of each component.
+    optimised_psd : np.ndarray[tuple[T], np.dtype[np.float32]]
+        A 1D NumPy array containing the blended PSD obtained from the optimised component
+        proportions.
+
+    Raises
+    ------
+    PSDError
+        If the optimisation problem does not solve to an optimal solution, or if no
+        solution is returned by the solver.
+
+    Notes
+    -----
+    - All PSDs supplied to this function must be cumulative passing PSDs on the same
+      sieve grid.
+    - The optimisation variable is constrained to be non-negative and to lie within the
+      bounds specified in `component_bounds`.
+    - The component proportions are additionally constrained to sum to 1.
+    - The optimisation is solved using `cvxpy` with the OSQP solver.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> sieves = np.array([2.36, 4.75, 9.5, 19.0], dtype=np.float32)
+    >>> target_psd = np.array([0.0, 0.25, 0.75, 1.0], dtype=np.float32)
+    >>> component_psds = np.array([
+    ...     [0.0, 0.0],
+    ...     [0.1, 0.4],
+    ...     [0.6, 0.9],
+    ...     [1.0, 1.0],
+    ... ], dtype=np.float32)
+    >>> component_bounds = np.array([
+    ...     [0.0, 1.0],
+    ...     [0.0, 1.0],
+    ... ], dtype=np.float32)
+    >>> quantities, blended_psd = match_psds(
+    ...     sieves=sieves,
+    ...     target_psd=target_psd,
+    ...     component_psds=component_psds,
+    ...     component_bounds=component_bounds,
+    ... )
+    >>> quantities.shape
+    (2,)
+    >>> blended_psd.shape
+    (4,)
+    """
+
+
+    import cvxpy as cp
+
+    sieves = sieves.astype(np.float32)
+    component_psds = component_psds.astype(np.float32)
+    target_psd = target_psd.astype(np.float32)
+    component_bounds = component_bounds.astype(np.float32)
+
+    component_quantities = cp.Variable(
+        name = 'quantities', 
+        shape = component_bounds.shape[0],
+        nonneg = True,
+        bounds = [*component_bounds.T],
+    )
+
+    sieve_weights = np.log(sieves[1:] / sieves[:-1])
+    if not np.isfinite(sieve_weights[0]):
+        sieve_weights[0] = sieve_weights[1]
+
+    current_psd = component_psds @ component_quantities
+    square_diffs = (target_psd - current_psd)**2
+    trapezium_areas = cp.multiply(
+        (square_diffs[1:] + square_diffs[:-1]),
+        sieve_weights,
+    )
+    to_minimise = cp.sum(trapezium_areas)
+
+    problem = cp.Problem(
+        objective = cp.Minimize(to_minimise),
+        constraints = [
+            cp.sum(component_quantities) == 1,
+        ],
+    )
+
+    problem.solve(
+        solver = 'OSQP',
+        verbose = 2,
+        eps_abs = 0.001,
+        time_limit = 100,
+    )
+
+    if (problem.status != 'optimal') or (component_quantities.value is None):
+        raise PSDError('optimisation failed.')
+
+    optimised_component_quantities = component_quantities.value
+    optimised_psd = component_psds @ optimised_component_quantities
+    return optimised_component_quantities, optimised_psd
