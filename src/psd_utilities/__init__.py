@@ -8,7 +8,9 @@ from .functions import (
     normalise_psd,
     reindex_psds,
     fill_top_and_bottom_of_reindexed_range_psds_with_0,
-    interpolate_reindexed_filled_range_psds,
+    fill_top_and_bottom_of_reindexed_cumulative_psds_with_0_and_1,
+    interpolate_reindexed_filled_psds,
+    get_psd_quantile_values,
 )
 
 __all__ = [
@@ -21,5 +23,7 @@ __all__ = [
     'normalise_psd',
     'reindex_psds',
     'fill_top_and_bottom_of_reindexed_range_psds_with_0',
-    'interpolate_reindexed_filled_range_psds',
+    'fill_top_and_bottom_of_reindexed_cumulative_psds_with_0_and_1',
+    'interpolate_reindexed_filled_psds',
+    'get_psd_quantile_values',
 ]

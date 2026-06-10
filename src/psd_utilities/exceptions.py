@@ -1,4 +1,12 @@
-class PSDError(ValueError):
+class PSDUtilitiesBaseError(Exception):
+
+    """
+    Base exception class for PSD utilities package.
+    """
+    ...
+
+
+class PSDError(ValueError, PSDUtilitiesBaseError):
 
     """
     Exception raised for errors in particle size distribution (PSD) processing.

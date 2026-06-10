@@ -378,7 +378,7 @@ def normalise_psd(
 
     This function deduplicates and sorts the original particle size distribution (PSD) 
     data, optionally prepends a zero fraction at a small sieve size, normalises the data 
-    as either a range or cumulative distribution, converts cumulative to range 
+    as either a range or cumulative distribution, converts range to cumulative 
     distributions, and converts from retained to passing as needed. The normalised PSD 
     is validated and returned.
 
@@ -387,8 +387,8 @@ def normalise_psd(
         - `check_range_psd`: Validates normalization and boundary values for range PSDs.
         - `check_cumulative_psd`: Validates monotonicity and boundary values for 
         cumulative PSDs.
-        - `convert_cumulative_to_range`: Converts cumulative fractions to range 
-        (incremental) fractions.
+        - `convert_range_to_cumulative`: Converts range (incremental) fractions to 
+        cumulative fractions.
         - `convert_between_retained_and_passing`: Converts between passing and retained 
         forms.
 
@@ -419,8 +419,9 @@ def normalise_psd(
     -----
     - The normalised PSD is always validated for normalization and monotonicity according 
     to the specified parameters.
-    - If `cumulative` is True, the PSD is normalized so that the last fraction is 1, and
-      then converted to a range distribution.
+    - If `cumulative` is True, the PSD is normalised so that the last fraction is 1.
+    - If `cumulative` is False, the PSD is normalised so that the first fraction is 0,
+    then converted to a cumulative distribution.
     - If `passing` is False, the PSD is converted from passing to retained form (or vice 
     versa) as appropriate.
     - The `_prepend_zero` argument is intended for internal use and should generally be 
@@ -461,26 +462,26 @@ def normalise_psd(
             psd_unique_sorted=psd_unique_sorted, 
             material_name = material_name,
         )
-        psd_range = psd_unique_sorted
+        psd_cumulative = convert_range_to_cumulative(
+            psd_unique_sorted, 
+            passing = passing,
+        )
     else:
-        psd_unique_sorted[:,1] /= psd_unique_sorted[-1,1]
+        psd_unique_sorted[:,1] /= psd_unique_sorted[-int(passing),1]
         check_cumulative_psd(
             psd_unique_sorted = psd_unique_sorted,
             passing = passing,
             material_name = material_name,
         )
-        psd_range = convert_cumulative_to_range(
-            psd_unique_sorted=psd_unique_sorted,
-            passing = passing,
-            copy = False,
-        )
+        psd_cumulative = psd_unique_sorted
+        
     if not passing:
         convert_between_retained_and_passing(
-            psd_unique_sorted = psd_unique_sorted,
-            cumulative = False,
+            psd_unique_sorted = psd_cumulative,
+            cumulative = True,
             copy = False,
         )
-    return psd_range
+    return psd_cumulative
 
 
 def reindex_psds[T: int](
@@ -502,7 +503,7 @@ def reindex_psds[T: int](
           NaN.
 
     All input PSDs must have been normalised and validated (deduplicated, sorted, 
-    normalized, and checked for monotonicity/boundaries) prior to calling this function.
+    normalised, and checked for monotonicity/boundaries) prior to calling this function.
 
     Parameters
     ----------
@@ -544,6 +545,12 @@ def reindex_psds[T: int](
      [0.7 0.5]
      [0.0 0.3]]
     """
+
+    if not psds:
+        return (
+            np.empty(shape = (0,), dtype = np.float32),
+            np.empty(shape = (0,0), dtype = np.float32),
+        )
 
     grouped_psds = defaultdict(list)
     tuple_to_array_map = {}
@@ -651,15 +658,107 @@ def fill_top_and_bottom_of_reindexed_range_psds_with_0[T: TwoDFloatArrayType](
         return psds
 
 
-def interpolate_reindexed_filled_range_psds[T: int, U: int](
+def fill_top_and_bottom_of_reindexed_cumulative_psds_with_0_and_1[T: TwoDFloatArrayType](
+    psds: T,
+    copy: bool = True,
+) -> T:
+
+    """
+    Fill the top with zeros and the bottom with ones of reindexed cumulative PSDs where 
+    fractions are inactive.
+
+    This function sets to zero any values at the top (smallest sieves) and to one at any 
+    values at the bottom (largest sieves) of each column in a 2D array of reindexed
+    cumulative particle size distributions (PSDs) where the cumulative sum is still zero.
+    This ensures that inactive sieve fractions at the boundaries are explicitly set to 
+    zero, which is essential for interpolation.
+
+    The input PSDs must be sorted by ascending sieve size and normalised as per the
+    processing functions described above (deduplicated, sorted, normalised and 
+    reindexed).
+
+    Parameters
+    ----------
+    psds : np.ndarray[tuple[int, int], np.dtype[np.floating]]
+        A 2D array of shape (number of sieves, number of PSDs), where each column is a
+        reindexed cumulative PSD aligned to a common set of sieves. Should contain NaN 
+        for missing values.
+    copy : bool, optional
+        If True (default), returns a new array with zeros filled in. If False, modifies 
+        the input array in place.
+
+    Returns
+    -------
+    psds_out : np.ndarray[tuple[int, int], np.dtype[np.number]]
+        The PSD array with zeros filled at the top and bottom inactive regions for each 
+        column.
+
+    Notes
+    -----
+    - The function assumes that the input PSDs are sorted by ascending sieve size and are
+      normalized (i.e., fractions sum to 1, with zeros at the boundaries where 
+      appropriate).
+    - Inactive regions are defined as those where the cumulative sum (from the top or 
+    bottom) is still zero, indicating no material has yet been retained or passed.
+    - NaN values are preserved except where replaced by zeros.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> psds = np.array([
+    ...     [0.1,    np.nan],
+    ...     [0.3,    0.0   ],
+    ...     [0.0,    0.5   ],
+    ...     [np.nan, 0.0   ]
+    ... ])
+    >>> fill_top_and_bottom_of_reindexed_range_psds_with_0(psds)
+    array([[0.1, 0. ],
+           [0.3, 0. ],
+           [0.0, 0.5],
+           [0.0, 0. ]])
+    """
+
+
+    out = psds.copy() if copy else psds
+
+    not_nan_mask = ~np.isnan(psds)
+    nan_mask = ~not_nan_mask
+
+    # First row per column where a real value > 0 appears
+    has_positive = not_nan_mask & (psds > 0)
+    first_positive_row = np.where(
+        has_positive.any(axis=0),
+        has_positive.argmax(axis=0),
+        psds.shape[0],  # sentinel: no such row
+    )
+
+    # Last row per column where a real value < 1 appears
+    has_not_one = not_nan_mask & (psds < 1)
+    last_not_one_row = np.where(
+        has_not_one.any(axis=0),
+        psds.shape[0] - 1 - has_not_one[::-1].argmax(axis=0),
+        -1,  # sentinel: no such row
+    )
+
+    rows = np.arange(psds.shape[0])[:, None]
+
+    # Fill boundary NaNs
+    out[nan_mask & (rows < first_positive_row)] = 0.0
+    out[nan_mask & (rows > last_not_one_row)] = 1.0
+
+    return out
+
+
+def interpolate_reindexed_filled_psds[T: int, U: int](
     *,
     psds: np.ndarray[tuple[T, U], np.dtype[np.floating]],
     sieves: np.ndarray[tuple[T], np.dtype[np.floating]],
+    cumulative: bool,
     copy: bool = True,
 ) -> np.ndarray[tuple[T, U], np.dtype[np.floating]]:
 
     """
-    Interpolate missing values in reindexed, filled range PSDs using PCHIP interpolation.
+    Interpolate missing values in reindexed, filled PSDs using PCHIP interpolation.
 
     This function fills NaN values in a 2D array of reindexed, filled range particle size
     distributions (PSDs) by interpolating along the sieve axis for each PSD (column).
@@ -668,18 +767,21 @@ def interpolate_reindexed_filled_range_psds[T: int, U: int](
     physically plausible results.
 
     The input PSDs must be aligned to a common set of sieves, sorted in ascending order,
-    and have zeros filled at the top and bottom inactive regions (as by
-    `fill_top_and_bottom_of_reindexed_range_psds_with_0`). Each column may contain NaNs
-    where data was missing for a particular sieve.
+    have zeros filled at the smallest inactive regions, and zeros or ones filled at the 
+    largest inactive regions (as by `fill_top_and_bottom_of_reindexed_range_psds_with_0` 
+    or `fill_top_and_bottom_of_reindexed_cumulative_psds_with_0_and_1`). Each column may
+    contain NaNs where data was missing for a particular sieve.
 
     Parameters
     ----------
     psds : np.ndarray[tuple[T: int, U: int], np.dtype[np.floating]]
         A 2D array of shape (number of sieves, number of PSDs), where each column is a
-        reindexed, filled range PSD. NaN values indicate missing data to be interpolated.
+        reindexed, filled PSD. NaN values indicate missing data to be interpolated.
     sieves : np.ndarray[tuple[T: int], np.dtype[np.floating]]
         A 1D array of sieve sizes, sorted in ascending order, corresponding to the rows 
         of `psds`.
+    cumulative : bool
+        Whether the psds are cumulative.
     copy : bool, optional
         If True (default), returns a new array with interpolated values. If False, 
         modifies the input array in place.
@@ -696,8 +798,7 @@ def interpolate_reindexed_filled_range_psds[T: int, U: int](
     interpolation.
     - Interpolation is performed only for columns with missing values; columns with no 
     NaNs are left unchanged.
-    - The function assumes that the input PSDs are already filled with zeros at the top 
-    and bottom inactive regions, and that sieves are sorted in ascending order.
+    - The function assumes that the sieves are sorted in ascending order.
     - The monotonic PCHIP interpolator is used to avoid introducing spurious 
     oscillations.
 
@@ -711,7 +812,7 @@ def interpolate_reindexed_filled_range_psds[T: int, U: int](
     ...     [0.0   ,  0.0]
     ... ])
     >>> sieves = np.array([2.36, 4.75, 9.5, 19.0])
-    >>> interpolate_reindexed_filled_range_psds(psds=psds, sieves=sieves)
+    >>> interpolate_reindexed_filled_range_psds(psds=psds, sieves=sieves, cumulative=False)
     array([[0. , 0. ],
            [0.3, 0. ],
            [0.2, 0.5],
@@ -721,6 +822,8 @@ def interpolate_reindexed_filled_range_psds[T: int, U: int](
     psds_transposed = psds.T
     psds_transposed_notnan_mask = ~np.isnan(psds_transposed)
     psd_has_no_nans_mask = psds_transposed_notnan_mask.all(axis = 1)
+    if psd_has_no_nans_mask.all():
+        return psds
     psd_has_nans_mask = ~psd_has_no_nans_mask
     psds_to_interpolate = psds_transposed[psd_has_nans_mask]
 
@@ -765,32 +868,52 @@ def interpolate_reindexed_filled_range_psds[T: int, U: int](
         psds_to_return = psds_transposed
     
     psds_to_return[psd_has_nans_mask] = interpolated_psds[notnan_mask_inverse_grouping_order]
+    if cumulative:
+        np.clip(psds_to_return, 0.0, 1.0)
+    else:
+        psds_to_return /= psds_to_return.sum(axis = 1, keepdims = True)
+    
     return psds_to_return.T
 
 
 def get_psd_quantile_values[T: int, U: int, V: int, X: type[np.floating]](
     sieves: np.ndarray[tuple[T], np.dtype[np.number]],
-    fractions: np.ndarray[tuple[T, U], np.dtype[np.floating]],
+    psds: np.ndarray[tuple[T, U], np.dtype[np.floating]],
     quantiles: np.ndarray[tuple[V], np.dtype[np.floating]],
+    cumulative: bool,
+    *,
     dtype: X = np.float32,
 ) -> np.ndarray[tuple[U, V], np.dtype[X]]:
 
     '''
-    fractions should be passing range form, and sum to 1. quantiles must deceed 1.
+    fractions should all have been normalised by normalise_psd, and quantiles must deceed
+    1.
     '''
-
-    sum_to_1_check = np.isclose(fractions.sum(axis = 0), 1, rtol = 0, atol = 0.001)
-    if not sum_to_1_check.all():
-        raise PSDError('not all fractions sum to 1.')
-
+        
     if not (quantiles <= 1).all():
         raise PSDError('not all quantiles deceed 1.')
+    elif not (quantiles >= 0).all():
+        raise PSDError('not all quantiles exceed 0.')
+    elif cumulative:
+        max_to_1_check = np.isclose(psds.max(axis = 0), 1, rtol = 0, atol = 0.001)
+        monotonicity_check = psds[1:] >= psds[:-1]
+        if not max_to_1_check.all():
+            raise PSDError('not all fractions deceed 1.')
+        elif not monotonicity_check.all():
+            raise PSDError('cumulative PSDs are not all monotonically increasing.')
+        else:
+            fractions_t_cum = psds.T
+    else:
+        sum_to_1_check = np.isclose(psds.sum(axis = 0), 1, rtol = 0, atol = 0.001)
+        if not sum_to_1_check.all():
+            raise PSDError('not all fractions sum to 1.')
+        else:
+            fractions_t_cum = psds.cumsum(axis = 0).T
 
-    fractions_t = fractions.T
-    fractions_t_cum = fractions_t.cumsum(axis = 1)
-    fractions_t_cum_3d, quantiles_3d = np.broadcast_arrays(
+    fractions_t_cum_3d, sieves_3d, quantiles_3d = np.broadcast_arrays(
         fractions_t_cum[:,None],
-        quantiles[None,:,None]
+        sieves[None,None,:],
+        quantiles[None,:,None],
     )
     fractions_t_quantiles_diffs = fractions_t_cum_3d - quantiles_3d
     fractions_t_quantiles_diffs_is_0 = fractions_t_quantiles_diffs == 0
@@ -805,7 +928,27 @@ def get_psd_quantile_values[T: int, U: int, V: int, X: type[np.floating]](
     # handling cases where quantile is not exactly present, so requires interpolation
     fractions_t_quantiles_diffs_to_interpolate = fractions_t_quantiles_diffs[diffs_contain_no_0]
     right_idx = (fractions_t_quantiles_diffs_to_interpolate > 0).argmax(axis = 1)
-    scale_factor = quantiles_3d[diffs_contain_no_0,0] / fractions_t_cum_3d[diffs_contain_no_0, right_idx]
-    quantile_results[diffs_contain_no_0] = sieves[right_idx] * scale_factor
+    left_idx = right_idx - 1
+    left_idx_lt_0 = left_idx < 0
+    left_idx[left_idx_lt_0] = right_idx[left_idx_lt_0]
 
+    # fitting a line between the two fractions wrt sieves to interpolate between them
+    fractions_to_interpolate_between = fractions_t_cum_3d[diffs_contain_no_0]
+    row_idx = np.arange(right_idx.shape[0])
+    fractions_right = fractions_to_interpolate_between[row_idx,right_idx]
+    fractions_left = fractions_to_interpolate_between[row_idx,left_idx]
+    sieves_to_interpolate_between = sieves_3d[diffs_contain_no_0]
+    sieves_right = sieves_to_interpolate_between[row_idx,right_idx]
+    sieves_left = sieves_to_interpolate_between[row_idx,left_idx]
+    gradients = (
+        (fractions_left - fractions_right)
+        /
+        (sieves_left - sieves_right)
+    )
+    intercepts = fractions_right - (gradients * sieves_right)
+    quantile_results[diffs_contain_no_0] = (
+        (quantiles_3d[diffs_contain_no_0, 0] - intercepts)
+        /
+        gradients
+    )
     return quantile_results
