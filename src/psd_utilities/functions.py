@@ -6,7 +6,7 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from .datatypes import TwoDFloatArrayType, TwoColumnArrayType
-from .exceptions import PSDError
+from .exceptions import PSDError, QuantileError, NoSolutionError
 
 def deduplicate_sort_sieves(
     psd: TwoColumnArrayType,
@@ -928,11 +928,13 @@ def get_psd_quantile_values[T: int, U: int, V: int, X: type[np.floating]](
     Raises
     ------
     PSDError
-        If any quantile is less than 0 or greater than 1.
         If `cumulative` is True and the PSDs are not monotonically non-decreasing or do
         not reach 1 within tolerance.
         If `cumulative` is False and the range fractions do not sum to 1 within
         tolerance.
+
+    QuantileError
+        If any quantile is less than 0 or greater than 1.
 
     Notes
     -----
@@ -960,9 +962,9 @@ def get_psd_quantile_values[T: int, U: int, V: int, X: type[np.floating]](
 
         
     if not (quantiles <= 1).all():
-        raise PSDError('not all quantiles deceed 1.')
+        raise QuantileError('not all quantiles deceed 1.')
     elif not (quantiles >= 0).all():
-        raise PSDError('not all quantiles exceed 0.')
+        raise QuantileError('not all quantiles exceed 0.')
     elif cumulative:
         max_to_1_check = np.isclose(psds.max(axis = 0), 1, rtol = 0, atol = 0.001)
         monotonicity_check = psds[1:] >= psds[:-1]
@@ -1153,7 +1155,7 @@ def match_psds[T: int, U: int](
     )
 
     if (problem.status != 'optimal') or (component_quantities.value is None):
-        raise PSDError('optimisation failed.')
+        raise NoSolutionError('optimisation failed.')
 
     optimised_component_quantities = component_quantities.value
     optimised_psd = component_psds @ optimised_component_quantities

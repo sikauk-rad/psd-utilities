@@ -28,3 +28,47 @@ class PSDError(ValueError, PSDUtilitiesBaseError):
     """
 
     ...
+
+
+class QuantileError(ValueError, PSDUtilitiesBaseError):
+
+    """
+    Exception raised for errors in quantile processing.
+
+    This error is typically raised when a quantile fails validation checks.
+
+    Parameters
+    ----------
+        *args : Any
+        Arguments passed to the base ValueError.
+        **kwargs : Any
+        Keyword arguments passed to the base ValueError.
+
+    See Also
+    --------
+        ValueError : Base exception for value errors.
+    """
+
+    ...
+
+
+class NoSolutionError(ValueError, PSDUtilitiesBaseError):
+
+    """
+    Exception raised for errors in optimisation.
+
+    This error is typically raised when a PSD optimisation fails.
+
+    Parameters
+    ----------
+        *args : Any
+        Arguments passed to the base ValueError.
+        **kwargs : Any
+        Keyword arguments passed to the base ValueError.
+
+    See Also
+    --------
+        ValueError : Base exception for value errors.
+    """
+
+    ...
