@@ -1030,6 +1030,7 @@ def match_psds[T: int, U: int](
     target_psd: np.ndarray[tuple[T], np.dtype[np.floating]],
     component_psds: np.ndarray[tuple[T, U], np.dtype[np.floating]],
     component_bounds: np.ndarray[tuple[U, Literal[2]]],
+    time_limit_s: int = 100,
 ) -> tuple[
         np.ndarray[tuple[U], np.dtype[np.float32]], 
         np.ndarray[tuple[T], np.dtype[np.float32]],
@@ -1062,6 +1063,8 @@ def match_psds[T: int, U: int](
     component_bounds : np.ndarray[tuple[U, Literal[2]]]
         A 2D NumPy array of shape (number of components, 2), where each row contains the
         lower and upper bounds for the corresponding component proportion.
+    time_limit_s : int, optional.
+        Maximum time limit in seconds for optimisation. Default is 100 seconds. 
 
     Returns
     -------
@@ -1151,7 +1154,7 @@ def match_psds[T: int, U: int](
         solver = 'OSQP',
         verbose = 2,
         eps_abs = 0.001,
-        time_limit = 100,
+        time_limit = time_limit_s,
     )
 
     if (problem.status != 'optimal') or (component_quantities.value is None):
