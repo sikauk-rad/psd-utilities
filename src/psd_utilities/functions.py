@@ -547,24 +547,24 @@ def reindex_psds[T: int](
      [0.0 0.3]]
     """
 
-    if not psds:
-        return (
-            np.empty(shape = (0,), dtype = np.float32),
-            np.empty(shape = (0,0), dtype = np.float32),
-        )
-
     grouped_psds = defaultdict(list)
     tuple_to_array_map = {}
     all_unique_sieves_set = set()
-    for index, psd in enumerate(psds, start = 0):
+    n_materials = 0
+    for index, psd in enumerate(psds):
+        n_materials = index + 1
         sieves_list = psd[:,0].tolist()
         all_unique_sieves_set.update(sieves_list)
         sieves_tuple = (*sieves_list,)
         grouped_psds[sieves_tuple].append([psd[:,1], index])
         if sieves_tuple not in tuple_to_array_map:
             tuple_to_array_map[sieves_tuple] = psd[:,0]
-    else:
-        n_materials = index
+
+    if not n_materials:
+        return (
+            np.empty(shape = (0,), dtype = np.float32),
+            np.empty(shape = (0,0), dtype = np.float32),
+        )
 
     all_unique_sieves = np.fromiter(
         all_unique_sieves_set,
@@ -870,7 +870,7 @@ def interpolate_reindexed_filled_psds[T: int, U: int](
     
     psds_to_return[psd_has_nans_mask] = interpolated_psds[notnan_mask_inverse_grouping_order]
     if cumulative:
-        np.clip(psds_to_return, 0.0, 1.0)
+        np.clip(psds_to_return, 0.0, 1.0, out = psds_to_return)
     else:
         psds_to_return /= psds_to_return.sum(axis = 1, keepdims = True)
     
