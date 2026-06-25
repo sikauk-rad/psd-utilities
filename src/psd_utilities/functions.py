@@ -16,14 +16,15 @@ def deduplicate_sort_sieves(
     """
     Remove duplicate sieves and sort the particle size distribution (psd) array.
 
-    Ensures that the input psd array contains unique sieve sizes (first column) and is sorted.
-    If duplicate sieve sizes are found, raises a ValueError indicating the problematic sieves.
+    Ensures that the input psd array contains unique sieve sizes (first column) and is 
+    sorted. If duplicate sieve sizes are found, raises a ValueError indicating the 
+    problematic sieves.
 
     Parameters
     ----------
     psd : np.ndarray[tuple[int, Literal[2]], np.dtype[np.number]]
-        An (n,2) NumPy array representing the particle size distribution.
-        The first column should contain sieve sizes and the second sieve fractions.
+        An (n,2) NumPy array representing the particle size distribution. The first 
+        column should contain sieve sizes and the second sieve fractions.
     material_name : str, optional
         Name of the material, used for error messages. Default is 'material'.
 
@@ -332,8 +333,10 @@ def convert_range_to_cumulative(
         (sorted in ascending order and unique), and the second column contains range
         (incremental) passing or retained fractions.
     passing : bool
-        If True, computes cumulative passing fractions as the cumulative sum of the range fractions.
-        If False, computes cumulative retained fractions as the reverse cumulative sum of the range fractions.
+        If True, computes cumulative passing fractions as the cumulative sum of the range
+        fractions.
+        If False, computes cumulative retained fractions as the reverse cumulative sum of
+        the range fractions.
     copy : bool, optional
         If True, returns a copy of the input array. If False, modifies the input array
         in place. Default is True.
@@ -495,8 +498,8 @@ def reindex_psds[T: int](
     """
     Reindex multiple normalised PSDs onto a common set of unique sieve sizes.
 
-    This function takes an iterable of normalised particle size distributions (PSDs), each 
-    as a (n, 2) array of sieve sizes and fractions, and constructs:
+    This function takes an iterable of normalised particle size distributions (PSDs), 
+    each as a (n, 2) array of sieve sizes and fractions, and constructs:
         - A sorted array of all unique sieve sizes present across all PSDs.
         - A 2D array where each column corresponds to a PSD, and each row to a unique 
         sieve size.
@@ -509,9 +512,9 @@ def reindex_psds[T: int](
     Parameters
     ----------
     psds : Iterable of np.ndarray[tuple[int, Literal[2]], np.dtype[np.number]]
-        An iterable of normalised PSD arrays, each of shape (n, 2), where the first column
-        contains sorted, unique sieve sizes and the second column contains normalized 
-        fractions.
+        An iterable of normalised PSD arrays, each of shape (n, 2), where the first 
+        column contains sorted, unique sieve sizes and the second column contains 
+        normalized fractions.
 
     Returns
     -------
