@@ -551,42 +551,37 @@ def reindex_psds[T: int](
     """
 
     grouped_psds = defaultdict(list)
-    tuple_to_array_map = {}
-    all_unique_sieves_set = set()
+    sieves_by_key = {}
     n_materials = 0
+
     for index, psd in enumerate(psds):
+        psd = psd.astype(np.float32)
         n_materials = index + 1
-        sieves_list = psd[:,0].tolist()
-        all_unique_sieves_set.update(sieves_list)
-        sieves_tuple = (*sieves_list,)
-        grouped_psds[sieves_tuple].append([psd[:,1], index])
-        if sieves_tuple not in tuple_to_array_map:
-            tuple_to_array_map[sieves_tuple] = psd[:,0]
+        sieves_col, values_col = psd[:, 0], psd[:, 1]
+        sieves_key = sieves_col.tobytes()
+        grouped_psds[sieves_key].append((values_col, index))
+        sieves_by_key.setdefault(sieves_key, sieves_col)
 
     if not n_materials:
         return (
             np.empty(shape = (0,), dtype = np.float32),
             np.empty(shape = (0,0), dtype = np.float32),
         )
-
-    all_unique_sieves = np.fromiter(
-        all_unique_sieves_set,
-        dtype = np.float32,
-        count = len(all_unique_sieves_set),
-    )
-    all_unique_sieves.sort()
+    
+    all_unique_sieves = np.unique(np.concatenate([*sieves_by_key.values()]))
 
     psds_with_same_sieves = np.full(
-        shape = (all_unique_sieves.shape[0], n_materials + 1),
+        shape = (all_unique_sieves.shape[0], n_materials),
         fill_value = np.nan,
         dtype = np.float32,
     )
-    for sieves_tuple, psds_indices_list in grouped_psds.items():
-        psds_list, indices_list = zip(*psds_indices_list)
-        sieves = tuple_to_array_map[sieves_tuple]
-        psds_array = np.column_stack(psds_list)
-        insert_positions = all_unique_sieves.searchsorted(sieves, side = 'left')
-        psds_with_same_sieves[insert_positions[:,None], [indices_list]] = psds_array
+
+    for sieves_key, psds_indices_list in grouped_psds.items():
+        psds, column_indices = zip(*psds_indices_list)
+        sieves = sieves_by_key[sieves_key]
+        row_indices = all_unique_sieves.searchsorted(sieves)
+        cross_indices = np.ix_(row_indices, column_indices)
+        psds_with_same_sieves[cross_indices] = np.column_stack(psds)
 
     return all_unique_sieves, psds_with_same_sieves
 
